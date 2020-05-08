@@ -1,0 +1,27 @@
+#!/bin/bash
+
+# Script for updating data.  After pulling and merging, it will
+# regenerate the history & update the notebooks.
+
+# First, pull and merge latest data first, as in:
+#    git fetch --all -p
+#    git merge nychealth/master
+
+# Then run this script
+
+# Clear out previous datasets
+rm all_versions_exported/*
+
+# Pull history
+scripts/scripts/git-export-all-file-versions public/data/owid-covid-data.csv
+
+# Generate history.csv file:
+python scripts/scripts/generate-history.py
+
+# Update Analysis:
+
+jupyter nbconvert --to notebook --inplace --execute scrypts/notebooks/Analysis.ipynb
+
+# Update Growth:
+
+jupyter nbconvert --to notebook --inplace --execute scripts/notebooks/Growth.ipynb
