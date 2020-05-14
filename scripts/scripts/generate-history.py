@@ -24,12 +24,24 @@ for filename in glob.glob(tmpdir + "/*.csv"):
     df["date"] = pd.to_datetime(df["date"])
     df.set_index("date", inplace=True)
 
-#    df["Cases/day, 7 day avg"] = df["new_cases"].rolling(window="7D").mean()
-#    df["Deaths/day, 7 day avg"] = df["new_deaths"].rolling(window="7D").mean()
+    cpd = df[["location", "new_cases"]].groupby("location").rolling(window="7D").mean()
+    dpd = df[["location", "new_deaths"]].groupby("location").rolling(window="7D").mean()
+    rollingperday = cpd.merge(dpd, how="outer", left_index=True, right_index=True)
+
+    rollingperday = rollingperday.rename(columns={"new_cases": "Cases/day, 7 day avg",
+                                                  "new_deaths": "Deaths/day, 7 day avg"})
+
+    df = df.merge(rollingperday, how="left", left_on=["location", "date"],right_index=True)
+
     datasets.append(df)
 
 df = pd.concat(datasets, sort=True)
 
 df.sort_values(["as_of", "date"], inplace=True)
 
+df.to_csv("public/data/history-full.csv")
+
+# File is too large to push to github, so just save data currently being used
+df = df[["location", "as_of", "new_cases", "Cases/day, 7 day avg", "new_deaths", "Deaths/day, 7 day avg"]]
 df.to_csv("public/data/history.csv")
+

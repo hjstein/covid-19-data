@@ -20,8 +20,8 @@ python scripts/scripts/generate-history.py
 
 # Update Analysis:
 
-jupyter nbconvert --to notebook --inplace --execute scrypts/notebooks/Analysis.ipynb
+jupyter nbconvert --to notebook --inplace --execute scripts/notebooks/Analysis.ipynb
 
 # Update Growth:
 
-jupyter nbconvert --to notebook --inplace --execute scripts/notebooks/Growth.ipynb
+# jupyter nbconvert --to notebook --inplace --execute scripts/notebooks/Growth.ipynb
