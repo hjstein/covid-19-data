@@ -7,12 +7,13 @@ Merges the main COVID-19 testing dataset with each of the COVID-19 ECDC datasets
 """
 
 import os
+from datetime import datetime
 from functools import reduce
 import pandas as pd
 
 CURRENT_DIR = os.path.dirname(__file__)
-INPUT_DIR = os.path.join(CURRENT_DIR, '../input/')
-DATA_DIR = os.path.join(CURRENT_DIR, '../../public/data/')
+INPUT_DIR = os.path.join(CURRENT_DIR, "../input/")
+DATA_DIR = os.path.join(CURRENT_DIR, "../../public/data/")
 
 
 def get_testing():
@@ -25,22 +26,29 @@ def get_testing():
     	testing {dataframe}
     """
 
-    testing = pd.read_csv(os.path.join(DATA_DIR, "testing/covid-testing-all-observations.csv"), usecols=[
-        "Entity",
-        "Date",
-        "Cumulative total",
-        "Daily change in cumulative total",
-        "Cumulative total per thousand",
-        "Daily change in cumulative total per thousand"
-    ])
+    testing = pd.read_csv(
+        os.path.join(DATA_DIR, "testing/covid-testing-all-observations.csv"),
+        usecols=[
+            "Entity",
+            "Date",
+            "Cumulative total",
+            "Daily change in cumulative total",
+            "7-day smoothed daily change",
+            "Cumulative total per thousand",
+            "Daily change in cumulative total per thousand",
+            "7-day smoothed daily change per thousand"
+        ]
+    )
 
     testing.columns = [
         "location",
         "date",
         "total_tests",
         "new_tests",
+        "new_tests_smoothed",
         "total_tests_per_thousand",
-        "new_tests_per_thousand"
+        "new_tests_per_thousand",
+        "new_tests_smoothed_per_thousand"
     ]
 
     testing[["total_tests_per_thousand", "new_tests_per_thousand"]] = testing[
@@ -89,7 +97,6 @@ def get_ecdc():
     data_frames = []
 
     # Process each file and melt it to vertical format
-    print()
     for ecdc_var in ecdc_variables:
 
         tmp = pd.read_csv(os.path.join(DATA_DIR, "../../public/data/ecdc/{}.csv".format(ecdc_var)))
@@ -124,30 +131,118 @@ def get_ecdc():
     return ecdc
 
 
+def add_macro_variables(complete_dataset):
+    """
+    Appends a list of 'macro' (non-directly COVID related) variables to the dataset
+    The data is denormalized, i.e. each yearly value (for example GDP per capita)
+    is added to each row of the complete dataset. This is meant to facilitate the use
+    of our dataset by non-experts.
+    """
+
+    original_shape = complete_dataset.shape
+
+    # For each macro variable:
+    # - the key is the name of the variable of interest
+    # - the value is the path to the corresponding file
+    macro_variables = {
+        "population": "un/population_2020.csv",
+        "population_density": "wb/population_density.csv",
+        "median_age": "un/median_age.csv",
+        "aged_65_older": "wb/aged_65_older.csv",
+        "aged_70_older": "un/aged_70_older.csv",
+        "gdp_per_capita": "wb/gdp_per_capita.csv",
+        "extreme_poverty": "wb/extreme_poverty.csv",
+        "cvd_death_rate": "gbd/cvd_death_rate.csv",
+        "diabetes_prevalence": "wb/diabetes_prevalence.csv",
+        "female_smokers": "wb/female_smokers.csv",
+        "male_smokers": "wb/male_smokers.csv",
+        "handwashing_facilities": "un/handwashing_facilities.csv",
+        "hospital_beds_per_100k": "owid/hospital_beds.csv"
+    }
+
+    for var, file in macro_variables.items():
+        var_df = pd.read_csv(os.path.join(INPUT_DIR, file), usecols=["iso_code", var])
+        var_df = var_df[-var_df["iso_code"].isnull()]
+        var_df[var] = var_df[var].round(3)
+        complete_dataset = complete_dataset.merge(var_df, on="iso_code", how="left")
+
+    assert complete_dataset.shape[0] == original_shape[0]
+    assert complete_dataset.shape[1] == original_shape[1] + len(macro_variables)
+
+    return complete_dataset
+
+
+def get_cgrt():
+    """
+    Downloads the latest OxCGRT dataset from BSG's GitHub repository
+    Remaps BSG country names to OWID country names
+
+    Returns:
+        cgrt {dataframe}
+    """
+
+    cgrt = pd.read_csv(
+        "https://raw.githubusercontent.com/OxCGRT/covid-policy-tracker/master/data/OxCGRT_latest.csv",
+        usecols=["CountryName", "Date", "StringencyIndex"]
+    )
+
+    cgrt.loc[:, "Date"] = pd.to_datetime(cgrt["Date"], format="%Y%m%d").dt.date.astype(str)
+
+    country_mapping = pd.read_csv(os.path.join(INPUT_DIR, "bsg/bsg_country_standardised.csv"))
+
+    cgrt = country_mapping.merge(cgrt, on="CountryName", how="right")
+
+    missing_from_mapping = cgrt[cgrt["Country"].isna()]["CountryName"].unique()
+    if len(missing_from_mapping) > 0:
+        raise Exception(f"Missing countries in OxCGRT mapping: {missing_from_mapping}")
+
+    cgrt = cgrt.drop(columns=["CountryName"])
+
+    rename_dict = {
+        "Country": "location",
+        "Date": "date",
+        "StringencyIndex": "stringency_index"
+    }
+
+    cgrt = cgrt.rename(columns=rename_dict)
+
+    return cgrt
+
+
 def generate_megafile():
     """
     Main function of this script, run if __main__
     Imports and processes the testing data
     Imports and processes the ECDC data
+    Imports and processes the OxCGRT data
     Merges testing and ECDC dataframes with an outer join
     Imports ISO 3166-1 alpha-3 codes
     Checks for missing ISO codes in the lookup file compared to OWID files
     Writes the 'megafile' to CSV and XLSX in /public/data/
     """
 
+    print("Fetching testing dataset…")
     testing = get_testing()
 
+    print("Fetching ECDC dataset…")
     ecdc = get_ecdc()
 
+    print("Fetching OxCGRT dataset…")
+    cgrt = get_cgrt()
+
     location_mismatch = set(testing.location).difference(set(ecdc.location))
-    for l in location_mismatch:
-        print(f"<!> Location '{l}' has testing data but is absent from ECDC data")
+    for loc in location_mismatch:
+        print(f"<!> Location '{loc}' has testing data but is absent from ECDC data")
+    print()
 
     all_covid = (
-        ecdc.merge(testing, on=["date", "location"], how="outer")
+        ecdc
+        .merge(testing, on=["date", "location"], how="outer")
+        .merge(cgrt, on=["date", "location"], how="left")
         .sort_values(["location", "date"])
     )
 
+    print("Adding ISO codes…")
     iso_codes = pd.read_csv(os.path.join(INPUT_DIR, "iso/iso3166_1_alpha_3_codes.csv"))
 
     missing_iso = set(all_covid.location).difference(set(iso_codes.location))
@@ -157,12 +252,23 @@ def generate_megafile():
 
     all_covid = iso_codes.merge(all_covid, on="location")
 
+    # Add macro variables
+    all_covid = add_macro_variables(all_covid)
+
     # Convert some variables to int in the final output, if and only if their NAs mean "zero"
     integer_vars = ["total_cases", "new_cases", "total_deaths", "new_deaths"]
     all_covid[integer_vars] = all_covid[integer_vars].fillna(0).astype(int)
 
+    print("Writing files…")
     all_covid.to_csv(os.path.join(DATA_DIR, "owid-covid-data.csv"), index=False)
     all_covid.to_excel(os.path.join(DATA_DIR, "owid-covid-data.xlsx"), index=False)
+
+    # Store the last updated time
+    timestamp_filename = os.path.join(DATA_DIR, "owid-covid-data-last-updated-timestamp.txt")
+    with open(timestamp_filename, "w") as timestamp_file:
+        timestamp_file.write(datetime.utcnow().replace(microsecond=0).isoformat())
+
+    print("All done!")
 
 
 if __name__ == '__main__':
