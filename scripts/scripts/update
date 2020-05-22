@@ -3,11 +3,15 @@
 # Script for updating data.  After pulling and merging, it will
 # regenerate the history & update the notebooks.
 
-# First, pull and merge latest data first, as in:
-#    git fetch --all -p
-#    git merge nychealth/master
+# Setup:
+#   After cloning, link in the forked source:
+#      git remote add owid https://github.com/owid/covid-19-data.git
 
-# Then run this script
+# Then, to update, first, pull and merge latest data first, as in:
+#    git fetch --all -p
+#    git merge owid/master
+
+# Then run this script to extract the history and update the notebooks
 
 # Clear out previous datasets
 rm all_versions_exported/*
