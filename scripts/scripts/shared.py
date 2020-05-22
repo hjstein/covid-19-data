@@ -14,13 +14,21 @@ CONTINENTS_CSV_PATH = os.path.join(CURRENT_DIR, '../input/owid/continents.csv')
 WB_INCOME_GROUPS_CSV_PATH = os.path.join(CURRENT_DIR, '../input/wb/income_groups.csv')
 EU_COUNTRIES_CSV_PATH = os.path.join(CURRENT_DIR, '../input/owid/eu_countries.csv')
 
-# Per population calculations
+
+# =========
+# Utilities
+# =========
 
 def _find_closest_year_row(df, year=2020):
     """Returns the row which is closest to the year specified (in either direction)"""
     df = df.copy()
     df['year'] = df['year'].sort_values(ascending=True)
     return df.loc[df['year'].map(lambda x: abs(x - 2020)).idxmin()]
+
+
+# ============
+# Loading data
+# ============
 
 def load_population(year=2020):
     df = pd.read_csv(
@@ -73,6 +81,11 @@ locations_by_wb_income_group = load_wb_income_groups() \
     .groupby('income_group')['location'].apply(list) \
     .to_dict()
 
+
+# ==============
+# Data injection
+# ==============
+
 # Useful for adding it to regions.csv and
 def inject_population(df):
     return df.merge(
@@ -92,7 +105,10 @@ def inject_per_million(df, measures):
         df[pop_measure] = series.round(decimals=3)
     return drop_population(df)
 
+
+# ===================================
 # OWID continents + custom aggregates
+# ===================================
 
 aggregates_spec = {
     'World': {
@@ -151,7 +167,10 @@ def inject_owid_aggregates(df):
         ]
     ], sort=True, ignore_index=True)
 
+
+# =======================
 # Total/daily calculation
+# =======================
 
 def inject_total_daily_cols(df, measures):
     # must sort in order to have the cumsum() and diff() in the right direction
@@ -165,6 +184,10 @@ def inject_total_daily_cols(df, measures):
             df[daily_col] = df.groupby('location')[total_col].diff().astype('Int64')
     return df
 
+
+# ======================
+# 'Days since' variables
+# ======================
 
 days_since_spec = {
     'days_since_100_total_cases': {
@@ -197,11 +220,6 @@ days_since_spec = {
         'value_threshold': 50,
         'positive_only': False
     },
-    'days_since_30_new_cases_7_day_avg': {
-        'value_col': 'new_cases_7_day_avg',
-        'value_threshold': 30,
-        'positive_only': False
-    },
     'days_since_10_new_deaths': {
         'value_col': 'new_deaths',
         'value_threshold': 10,
@@ -215,11 +233,6 @@ days_since_spec = {
     'days_since_3_new_deaths': {
         'value_col': 'new_deaths',
         'value_threshold': 3,
-        'positive_only': False
-    },
-    'days_since_5_new_deaths_7_day_avg': {
-        'value_col': 'new_deaths_7_day_avg',
-        'value_threshold': 5,
         'positive_only': False
     },
     'days_since_30_new_cases_7_day_avg_right': {
@@ -251,41 +264,36 @@ days_since_spec = {
 
 def _get_date_of_threshold(df, col, threshold):
     try:
-        df_gt_nth = df[df[col] >= threshold]
-        earliest = df.loc[pd.to_datetime(df_gt_nth['date']).idxmin()]
-        return earliest['date']
+        return df['date'][df[col] >= threshold].iloc[0]
     except:
         return None
 
 def _date_diff(a, b, positive_only=False):
+    if pd.isnull(a) or pd.isnull(b):
+        return None
     diff = (a - b).days
     if positive_only and diff < 0:
         return None
     return diff
 
-def _inject_days_since(df, col, ref_date, positive_only):
-    df = df.copy()
-    df[col] = df['date'].map(lambda date: _date_diff(
-        pd.to_datetime(date), pd.to_datetime(ref_date), positive_only
+def _days_since(df, spec):
+    ref_date = pd.to_datetime(_get_date_of_threshold(df, spec['value_col'], spec['value_threshold']))
+    return pd.to_datetime(df['date']).map(lambda date: _date_diff(
+        date, ref_date, spec['positive_only']
     )).astype('Int64')
-    return df
-
-def _inject_days_since_by_location(df, col, spec):
-    date = _get_date_of_threshold(df, spec['value_col'], spec['value_threshold'])
-    if date is not None:
-        df = _inject_days_since(df, col, date, spec['positive_only'])
-    return df
-
-def _inject_days_since_from_spec(df, col, spec):
-    return pd.concat([
-        _inject_days_since_by_location(df_location, col, spec)
-        for loc, df_location in df.groupby('location')
-    ])
 
 def inject_days_since(df):
+    df = df.copy()
     for col, spec in days_since_spec.items():
-        df = _inject_days_since_from_spec(df, col, spec)
+        df[col] = df[['date', 'location', spec['value_col']]].groupby('location') \
+            .apply(lambda df_group: _days_since(df_group, spec)) \
+            .reset_index(level=0, drop=True)
     return df
+
+
+# ===================
+# Case Fatality Ratio
+# ===================
 
 def _apply_row_cfr_100(row):
     if pd.notnull(row['total_cases']) and row['total_cases'] >= 100:
@@ -298,6 +306,11 @@ def inject_cfr(df):
     df['cfr'] = cfr_series.round(decimals=3)
     df['cfr_100_cases'] = df.apply(_apply_row_cfr_100, axis=1)
     return df
+
+
+# ================
+# Rolling averages
+# ================
 
 rolling_avg_spec = {
     'new_cases_3_day_avg_right': {
@@ -359,6 +372,11 @@ def inject_rolling_avg(df):
             .mean().round(decimals=5).reset_index(level=0, drop=True)
     return df
 
+
+# ===========================
+# Variables to find exemplars
+# ===========================
+
 def inject_exemplars(df):
     df = inject_population(df)
 
@@ -384,7 +402,12 @@ def inject_exemplars(df):
 
     return drop_population(df)
 
-growth_rates_spec = {
+
+# =========================
+# Doubling days calculation
+# =========================
+
+doubling_days_spec = {
     'doubling_days_total_cases_3_day_period': {
         'value_col': 'total_cases',
         'periods': 3
@@ -409,8 +432,8 @@ def pct_change_to_doubling_days(pct_change, periods):
         return np.round(doubling_days, decimals=2)
     return pd.NA
 
-def inject_growth_rates(df):
-    for col, spec in growth_rates_spec.items():
+def inject_doubling_days(df):
+    for col, spec in doubling_days_spec.items():
         value_col = spec['value_col']
         periods = spec['periods']
         df[col] = df.replace({ value_col: 0 }, pd.NA) \
@@ -419,7 +442,26 @@ def inject_growth_rates(df):
             [value_col].map(lambda pct: pct_change_to_doubling_days(pct, periods))
     return df
 
+
+# ===============================
+# Week-on-week growth calculation
+# ===============================
+
+def inject_weekly_growth(df):
+    df[['weekly_cases', 'weekly_deaths']] = df[['location', 'new_cases', 'new_deaths']].fillna(0) \
+        .groupby('location')[['new_cases', 'new_deaths']] \
+        .rolling(window=7, min_periods=7, center=False) \
+        .sum().reset_index(level=0, drop=True)
+    df[['weekly_pct_growth_cases', 'weekly_pct_growth_deaths']] = df[['location', 'weekly_cases', 'weekly_deaths']] \
+        .groupby('location')[['weekly_cases', 'weekly_deaths']] \
+        .pct_change(periods=7, fill_method=None) \
+        .replace([np.inf, -np.inf], pd.NA) * 100
+    return df
+
+
+# ============
 # Export logic
+# ============
 
 KEYS = ['date', 'location']
 
@@ -489,6 +531,11 @@ GRAPHER_COL_NAMES = {
     'doubling_days_total_cases_7_day_period': 'Doubling days of total confirmed cases (7 day period)',
     'doubling_days_total_deaths_3_day_period': 'Doubling days of total confirmed deaths (3 day period)',
     'doubling_days_total_deaths_7_day_period': 'Doubling days of total confirmed deaths (7 day period)',
+    # Weekly aggregates
+    'weekly_cases': 'Weekly cases',
+    'weekly_deaths': 'Weekly deaths',
+    'weekly_pct_growth_cases': 'Weekly case growth (%)',
+    'weekly_pct_growth_deaths': 'Weekly death growth (%)',
 }
 
 def existsin(l1, l2):
