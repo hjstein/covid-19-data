@@ -25,3 +25,7 @@ jupyter nbconvert --to notebook --inplace --execute scripts/notebooks/Analysis.i
 # Update Growth:
 
 # jupyter nbconvert --to notebook --inplace --execute scripts/notebooks/Growth.ipynb
+
+# Update graphs for slides:
+
+jupyter nbconvert --to notebook --inplace --execute scripts/notebooks/TalkSlides.ipynb
