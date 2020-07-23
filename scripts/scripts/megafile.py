@@ -11,6 +11,8 @@ import os
 from datetime import datetime
 from functools import reduce
 import pandas as pd
+import numpy as np
+
 
 CURRENT_DIR = os.path.dirname(__file__)
 INPUT_DIR = os.path.join(CURRENT_DIR, "../input/")
@@ -101,19 +103,7 @@ def get_ecdc():
 
     # Process each file and melt it to vertical format
     for ecdc_var in ecdc_variables:
-
-        tmp = pd.read_csv(os.path.join(DATA_DIR, "../../public/data/ecdc/{}.csv".format(ecdc_var)))
-
-        for country in tmp.columns[2:]:
-            if tmp[country].values[-2] > 0 and tmp[country].values[-1] > 100 \
-                and tmp[country].values[-1] / tmp[country].values[-2] > 3:
-                print("<!> Sudden increase in {}: {} from {} to {}".format(
-                    ecdc_var,
-                    country,
-                    int(tmp[country].values[-2]),
-                    int(tmp[country].values[-1])
-                ))
-
+        tmp = pd.read_csv(os.path.join(DATA_DIR, f"../../public/data/ecdc/{ecdc_var}.csv"))
         country_cols = list(tmp.columns)
         country_cols.remove("date")
         tmp = (
@@ -134,7 +124,7 @@ def get_ecdc():
     return ecdc
 
 
-def add_macro_variables(complete_dataset):
+def add_macro_variables(complete_dataset, macro_variables):
     """
     Appends a list of 'macro' (non-directly COVID related) variables to the dataset
     The data is denormalized, i.e. each yearly value (for example GDP per capita)
@@ -143,25 +133,6 @@ def add_macro_variables(complete_dataset):
     """
 
     original_shape = complete_dataset.shape
-
-    # For each macro variable:
-    # - the key is the name of the variable of interest
-    # - the value is the path to the corresponding file
-    macro_variables = {
-        "population": "un/population_2020.csv",
-        "population_density": "wb/population_density.csv",
-        "median_age": "un/median_age.csv",
-        "aged_65_older": "wb/aged_65_older.csv",
-        "aged_70_older": "un/aged_70_older.csv",
-        "gdp_per_capita": "wb/gdp_per_capita.csv",
-        "extreme_poverty": "wb/extreme_poverty.csv",
-        "cvd_death_rate": "gbd/cvd_death_rate.csv",
-        "diabetes_prevalence": "wb/diabetes_prevalence.csv",
-        "female_smokers": "wb/female_smokers.csv",
-        "male_smokers": "wb/male_smokers.csv",
-        "handwashing_facilities": "un/handwashing_facilities.csv",
-        "hospital_beds_per_thousand": "owid/hospital_beds.csv"
-    }
 
     for var, file in macro_variables.items():
         var_df = pd.read_csv(os.path.join(INPUT_DIR, file), usecols=["iso_code", var])
@@ -212,23 +183,29 @@ def get_cgrt():
     return cgrt
 
 
-def df_to_json(complete_dataset, output_path):
+def df_to_json(complete_dataset, output_path, static_columns):
     """
     Writes a JSON version of the complete dataset, with the ISO code at the root.
     NA values are dropped from the output.
+    Macro variables are normalized by appearing only once, at the root of each ISO code.
     """
     megajson = {}
+
+    static_columns = ["continent", "location"] + list(static_columns)
 
     complete_dataset = complete_dataset.dropna(axis="rows", subset=["iso_code"])
 
     for _, row in complete_dataset.iterrows():
+
         row_iso = row["iso_code"]
-        row_dict = row.drop("iso_code").dropna().to_dict()
+        row_dict_static = row.drop("iso_code")[static_columns].dropna().to_dict()
+        row_dict_dynamic = row.drop("iso_code").drop(static_columns).dropna().to_dict()
 
         if row_iso not in megajson:
-            megajson[row_iso] = [row_dict]
+            megajson[row_iso] = row_dict_static
+            megajson[row_iso]["data"] = [row_dict_dynamic]
         else:
-            megajson[row_iso].append(row_dict)
+            megajson[row_iso]["data"].append(row_dict_dynamic)
 
     with open(output_path, "w") as file:
         file.write(json.dumps(megajson, indent=4))
@@ -246,19 +223,18 @@ def generate_megafile():
     Writes the 'megafile' to CSV and XLSX in /public/data/
     """
 
-    print("Fetching testing dataset…")
+    print("\nFetching testing dataset…")
     testing = get_testing()
 
-    print("Fetching ECDC dataset…")
+    print("\nFetching ECDC dataset…")
     ecdc = get_ecdc()
-
-    print("Fetching OxCGRT dataset…")
-    cgrt = get_cgrt()
 
     location_mismatch = set(testing.location).difference(set(ecdc.location))
     for loc in location_mismatch:
         print(f"<!> Location '{loc}' has testing data but is absent from ECDC data")
-    print()
+
+    print("\nFetching OxCGRT dataset…")
+    cgrt = get_cgrt()
 
     all_covid = (
         ecdc
@@ -290,7 +266,25 @@ def generate_megafile():
     all_covid = continents.merge(all_covid, on="iso_code", how="right")
 
     # Add macro variables
-    all_covid = add_macro_variables(all_covid)
+    # - the key is the name of the variable of interest
+    # - the value is the path to the corresponding file
+    macro_variables = {
+        "population": "un/population_2020.csv",
+        "population_density": "wb/population_density.csv",
+        "median_age": "un/median_age.csv",
+        "aged_65_older": "wb/aged_65_older.csv",
+        "aged_70_older": "un/aged_70_older.csv",
+        "gdp_per_capita": "wb/gdp_per_capita.csv",
+        "extreme_poverty": "wb/extreme_poverty.csv",
+        "cardiovasc_death_rate": "gbd/cardiovasc_death_rate.csv",
+        "diabetes_prevalence": "wb/diabetes_prevalence.csv",
+        "female_smokers": "wb/female_smokers.csv",
+        "male_smokers": "wb/male_smokers.csv",
+        "handwashing_facilities": "un/handwashing_facilities.csv",
+        "hospital_beds_per_thousand": "owid/hospital_beds.csv",
+        "life_expectancy": "owid/life_expectancy.csv"
+    }
+    all_covid = add_macro_variables(all_covid, macro_variables)
 
     print("Writing to CSV…")
     all_covid.to_csv(os.path.join(DATA_DIR, "owid-covid-data.csv"), index=False)
@@ -299,7 +293,7 @@ def generate_megafile():
     all_covid.to_excel(os.path.join(DATA_DIR, "owid-covid-data.xlsx"), index=False)
 
     print("Writing to JSON…")
-    df_to_json(all_covid, os.path.join(DATA_DIR, "owid-covid-data.json"))
+    df_to_json(all_covid, os.path.join(DATA_DIR, "owid-covid-data.json"), macro_variables.keys())
 
     # Store the last updated time
     timestamp_filename = os.path.join(DATA_DIR, "owid-covid-data-last-updated-timestamp.txt")
