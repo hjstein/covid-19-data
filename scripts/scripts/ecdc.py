@@ -2,6 +2,7 @@ import os
 import sys
 import pandas as pd
 import numpy as np
+import pytz
 from datetime import datetime, timedelta
 from termcolor import colored
 
@@ -14,7 +15,8 @@ from shared import load_population, load_owid_continents, inject_total_daily_col
     inject_rolling_avg, inject_exemplars, inject_doubling_days, inject_weekly_growth, \
     inject_biweekly_growth, standard_export, ZERO_DAY
 
-from ecdc_utils.slack_client import send_warning, send_success
+from utils.slack_client import send_warning, send_success
+from utils.db_imports import import_dataset
 
 INPUT_PATH = os.path.join(CURRENT_DIR, '../input/ecdc/')
 OUTPUT_PATH = os.path.join(CURRENT_DIR, '../../public/data/ecdc/')
@@ -162,7 +164,7 @@ def check_data_correctness(filename):
             previous_RA = np.mean(country_vals[-8:-1])
             new_RA = np.mean(country_vals[-7:])
 
-            if new_RA > 1.2 * previous_RA and new_RA > 100:
+            if new_RA >= 1.5 * previous_RA and new_RA > 100:
                 sudden_changes_msg += "<!> Sudden increase of *{}* in *{}*: {} (7-day average was {})\n".format(
                     var_name,
                     location,
@@ -220,8 +222,8 @@ def load_standardized(filename):
         'biweekly_cases',
         'biweekly_deaths'
     ])
-    df = inject_cfr(df)
     df = inject_rolling_avg(df)
+    df = inject_cfr(df)
     df = inject_days_since(df)
     df = inject_exemplars(df)
     return df.sort_values(by=['location', 'date'])
@@ -248,7 +250,7 @@ def export(filename):
         DATASET_NAME
     )
 
-def run(filename=None, skip_download=False):
+def main(filename=None, skip_download=False):
     import inquirer
     from glob import glob
 
@@ -303,6 +305,20 @@ def run(filename=None, skip_download=False):
         title='Updated GitHub exports'
     )
 
+def update_db():
+    time_str = datetime.now().astimezone(pytz.timezone('Europe/London')).strftime("%-d %B, %H:%M")
+    source_name = f"European CDC – Situation Update Worldwide – Last updated {time_str} (London time)"
+    import_dataset(
+        dataset_name=DATASET_NAME,
+        namespace='owid',
+        csv_path=os.path.join(OUTPUT_PATH, DATASET_NAME + ".csv"),
+        default_variable_display={
+            'yearIsDay': True,
+            'zeroDay': ZERO_DAY
+        },
+        source_name=source_name
+    )
+
 
 if __name__ == '__main__':
     import argparse
@@ -310,7 +326,7 @@ if __name__ == '__main__':
     parser.add_argument('filename', nargs='?', default=None, help="CSV/XLSX filename")
     parser.add_argument('-s', '--skip-download', action='store_true', help="Skip downloading files from the ECDC website")
     args = parser.parse_args()
-    run(
+    main(
         filename=args.filename,
         skip_download=args.skip_download
     )

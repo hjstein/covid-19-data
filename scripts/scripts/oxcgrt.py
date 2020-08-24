@@ -1,12 +1,32 @@
 import os
-from datetime import datetime
+import sys
 import pandas as pd
+import pytz
+from datetime import datetime
+
+CURRENT_DIR = os.path.dirname(__file__)
+sys.path.append(CURRENT_DIR)
+
+from utils.db_imports import import_dataset
 
 URL = "https://raw.githubusercontent.com/OxCGRT/covid-policy-tracker/master/data/OxCGRT_latest.csv"
-CURRENT_DIR = os.path.dirname(__file__)
-DATA_PATH = os.path.join(CURRENT_DIR, "../input/bsg/")
+DATASET_NAME = 'COVID Government Response (OxBSG)'
 
-def main():
+INPUT_PATH = os.path.join(CURRENT_DIR, "../input/bsg/")
+OUTPUT_PATH = os.path.join(CURRENT_DIR, '../../public/data/bsg/')
+INPUT_CSV_PATH = os.path.join(INPUT_PATH, 'latest.csv')
+OUTPUT_CSV_PATH = os.path.join(OUTPUT_PATH, f"{DATASET_NAME}.csv")
+
+ZERO_DAY = "2020-01-01"
+zero_day = datetime.strptime(ZERO_DAY, "%Y-%m-%d")
+
+def download_csv():
+    os.system('curl --silent -f -o %(INPUT_CSV_PATH)s -L %(URL)s' % {
+        'INPUT_CSV_PATH': INPUT_CSV_PATH,
+        'URL': URL
+    })
+
+def export_grapher():
 
     cols = [
         "CountryName",
@@ -31,16 +51,15 @@ def main():
         "StringencyIndex"
     ]
 
-    cgrt = pd.read_csv(URL, usecols=cols)
+    cgrt = pd.read_csv(INPUT_CSV_PATH, usecols=cols)
 
-    cgrt.loc[:, "Date"] = (
-        (pd.to_datetime(cgrt["Date"], format="%Y%m%d") - datetime(2020, 1, 1))
-        .dt.days
+    cgrt.loc[:, "Date"] = pd.to_datetime(cgrt["Date"], format="%Y%m%d").map(
+        lambda date: (date - zero_day).days
     )
 
     rows_before = cgrt.shape[0]
 
-    country_mapping = pd.read_csv(os.path.join(DATA_PATH, "bsg_country_standardised.csv"))
+    country_mapping = pd.read_csv(os.path.join(INPUT_PATH, "bsg_country_standardised.csv"))
 
     cgrt = country_mapping.merge(cgrt, on="CountryName", how="right")
 
@@ -74,7 +93,24 @@ def main():
 
     cgrt = cgrt.rename(columns=rename_dict)
 
-    cgrt.to_csv(os.path.join(DATA_PATH, "oxcgrt.csv"), index=False)
+    os.system('mkdir -p %s' % os.path.abspath(OUTPUT_PATH))
+    cgrt.to_csv(OUTPUT_CSV_PATH, index=False)
+
+def update_db():
+    time_str = datetime.now().astimezone(pytz.timezone('Europe/London')).strftime("%-d %B, %H:%M")
+    source_name = f"Hale, Webster, Petherick, Phillips, and Kira (2020). Oxford COVID-19 Government Response Tracker – Last updated {time_str} (London time)"
+    import_dataset(
+        dataset_name=DATASET_NAME,
+        namespace='owid',
+        csv_path=OUTPUT_CSV_PATH,
+        default_variable_display={
+            'yearIsDay': True,
+            'zeroDay': ZERO_DAY
+        },
+        source_name=source_name,
+        slack_notifications=False
+    )
 
 if __name__ == '__main__':
-    main()
+    download_csv()
+    export_grapher()

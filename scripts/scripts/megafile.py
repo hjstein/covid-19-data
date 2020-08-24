@@ -39,7 +39,9 @@ def get_testing():
             "7-day smoothed daily change",
             "Cumulative total per thousand",
             "Daily change in cumulative total per thousand",
-            "7-day smoothed daily change per thousand"
+            "7-day smoothed daily change per thousand",
+            "Short-term positive rate",
+            "Short-term tests per case"
         ]
     )
 
@@ -51,7 +53,9 @@ def get_testing():
         "7-day smoothed daily change": "new_tests_smoothed",
         "Cumulative total per thousand": "total_tests_per_thousand",
         "Daily change in cumulative total per thousand": "new_tests_per_thousand",
-        "7-day smoothed daily change per thousand": "new_tests_smoothed_per_thousand"
+        "7-day smoothed daily change per thousand": "new_tests_smoothed_per_thousand",
+        "Short-term positive rate": "positive_rate",
+        "Short-term tests per case": "tests_per_case"
     })
 
     testing[
@@ -91,12 +95,16 @@ def get_ecdc():
     ecdc_variables = [
         "total_cases",
         "new_cases",
+        "weekly_cases",
         "total_deaths",
         "new_deaths",
+        "weekly_deaths",
         "total_cases_per_million",
         "new_cases_per_million",
+        "weekly_cases_per_million",
         "total_deaths_per_million",
-        "new_deaths_per_million"
+        "new_deaths_per_million",
+        "weekly_deaths_per_million"
     ]
 
     data_frames = []
@@ -106,12 +114,27 @@ def get_ecdc():
         tmp = pd.read_csv(os.path.join(DATA_DIR, f"../../public/data/ecdc/{ecdc_var}.csv"))
         country_cols = list(tmp.columns)
         country_cols.remove("date")
+
+        # Carrying last observation forward for International totals to avoid discrepancies
+        if ecdc_var[:5] == "total":
+            tmp = tmp.sort_values("date")
+            tmp["International"] = tmp["International"].ffill()
+
         tmp = (
             pd.melt(tmp, id_vars="date", value_vars=country_cols)
             .rename(columns={"value": ecdc_var, "variable": "location"})
             .dropna()
         )
-        tmp[ecdc_var] = tmp[ecdc_var].round(3)
+        if ecdc_var[:7] == "weekly_":
+            tmp[ecdc_var] = tmp[ecdc_var].div(7).round(3)
+            tmp = tmp.rename(errors="ignore", columns={
+                "weekly_cases": "new_cases_smoothed",
+                "weekly_deaths": "new_deaths_smoothed",
+                "weekly_cases_per_million": "new_cases_smoothed_per_million",
+                "weekly_deaths_per_million": "new_deaths_smoothed_per_million"
+            })
+        else:
+            tmp[ecdc_var] = tmp[ecdc_var].round(3)
         data_frames.append(tmp)
     print()
 
