@@ -48,10 +48,16 @@ def export_grapher():
         "H3_Contact tracing",
         "H4_Emergency investment in healthcare",
         "H5_Investment in vaccines",
-        "StringencyIndex"
+        "StringencyIndex",
+        "ContainmentHealthIndex"
     ]
 
-    cgrt = pd.read_csv(INPUT_CSV_PATH, usecols=cols)
+    cgrt = pd.read_csv(INPUT_CSV_PATH, low_memory=False)
+
+    if "RegionCode" in cgrt.columns:
+        cgrt = cgrt[cgrt.RegionCode.isnull()]
+
+    cgrt = cgrt[cols]
 
     cgrt.loc[:, "Date"] = pd.to_datetime(cgrt["Date"], format="%Y%m%d").map(
         lambda date: (date - zero_day).days
@@ -83,6 +89,7 @@ def export_grapher():
         "H5_Investment in vaccines": "Investment in Vaccines (OxBSG)",
         "H3_Contact tracing": "Contact tracing (OxBSG)",
         "StringencyIndex": "Stringency Index (OxBSG)",
+        "ContainmentHealthIndex": "Containment and Health Index (OxBSG)",
         "C4_Restrictions on gatherings": "Restrictions on gatherings (OxBSG)",
         "C6_Stay at home requirements": "Stay at home requirements (OxBSG)",
         "E1_Income support": "Income support (OxBSG)",

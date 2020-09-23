@@ -180,8 +180,13 @@ def get_cgrt():
 
     cgrt = pd.read_csv(
         "https://raw.githubusercontent.com/OxCGRT/covid-policy-tracker/master/data/OxCGRT_latest.csv",
-        usecols=["CountryName", "Date", "StringencyIndex"]
+        low_memory=False
     )
+
+    if "RegionCode" in cgrt.columns:
+        cgrt = cgrt[cgrt.RegionCode.isnull()]
+
+    cgrt = cgrt[["CountryName", "Date", "StringencyIndex"]]
 
     cgrt.loc[:, "Date"] = pd.to_datetime(cgrt["Date"], format="%Y%m%d").dt.date.astype(str)
 
@@ -305,9 +310,13 @@ def generate_megafile():
         "male_smokers": "wb/male_smokers.csv",
         "handwashing_facilities": "un/handwashing_facilities.csv",
         "hospital_beds_per_thousand": "owid/hospital_beds.csv",
-        "life_expectancy": "owid/life_expectancy.csv"
+        "life_expectancy": "owid/life_expectancy.csv",
+        "human_development_index": "un/human_development_index.csv",
     }
     all_covid = add_macro_variables(all_covid, macro_variables)
+
+    # Check that we only have 1 unique row for each location/date pair
+    assert all_covid.drop_duplicates(subset=["location", "date"]).shape == all_covid.shape
 
     print("Writing to CSV…")
     all_covid.to_csv(os.path.join(DATA_DIR, "owid-covid-data.csv"), index=False)
